@@ -11,51 +11,13 @@ import argparse
 import torch.distributed as dist
 import torch.nn as nn
 from torch.nn.parallel import DistributedDataParallel
-from torch.utils.data import DataLoader
-from torch.distributed.elastic.utils.data import ElasticDistributedSampler
+
 from typing import List, Tuple
 import time
-
-class AverageMeter(object):
-    """Computes and stores the average and current value"""
-
-    def __init__(self, name: str, fmt: str = ":f"):
-        self.name = name
-        self.fmt = fmt
-        self.reset()
-
-    def reset(self) -> None:
-        self.val = 0
-        self.avg = 0
-        self.sum = 0
-        self.count = 0
-
-    def update(self, val, n=1) -> None:
-        self.val = val
-        self.sum += val * n
-        self.count += n
-        self.avg = self.sum / self.count
-
-    def __str__(self):
-        fmtstr = "{name} {val" + self.fmt + "} ({avg" + self.fmt + "})"
-        return fmtstr.format(**self.__dict__)
-
-
-class ProgressMeter(object):
-    def __init__(self, num_batches: int, meters: List[AverageMeter], prefix: str = ""):
-        self.batch_fmtstr = self._get_batch_fmtstr(num_batches)
-        self.meters = meters
-        self.prefix = prefix
-
-    def display(self, batch: int) -> None:
-        entries = [self.prefix + self.batch_fmtstr.format(batch)]
-        entries += [str(meter) for meter in self.meters]
-        print("\t".join(entries))
-
-    def _get_batch_fmtstr(self, num_batches: int) -> str:
-        num_digits = len(str(num_batches // 1))
-        fmt = "{:" + str(num_digits) + "d}"
-        return "[" + fmt + "/" + fmt.format(num_batches) + "]"
+from data.data import initialize_data_loader
+from utils.meters import AverageMeter, ProgressMeter
+from torch.utils.data import DataLoader
+from utils.train_util import *
 
 # parse arguments
 def parse_args():
@@ -63,60 +25,13 @@ def parse_args():
     parser.add_argument('--train', '-t', action='store_true', default=True)
     parser.add_argument('--resume', '-r', action='store_true', default=False)
     parser.add_argument('--evaluate', '-e', action='store_true', default=False)
-    parser.add_argument('--learning_rate', '-lr', type=float, default=0.0001)
+    parser.add_argument('--learning_rate', '-lr', type=float, default=0.01)
     parser.add_argument('--batch_size', '-b', type=int, default=64)
     parser.add_argument('--workers', '-w', type=int, default= 4*4)
     parser.add_argument('--checkpoint_path', '-cp', type=str, default=os.path.basename(sys.argv[0]))
     
     return parser.parse_args()
-def initialize_model(single_model, lr, device_id):
-    print(f"=> creating model ... ")
-    model = single_model
-    model.cuda(device_id)
-    cudnn.benchmark = True
-    model = DistributedDataParallel(model, device_ids=[device_id])
 
-    criterion = nn.CrossEntropyLoss().cuda(device_id)
-    optimizer = torch.optim.SGD(model.parameters(), lr=lr)
-
-    return model, criterion, optimizer
-
-def initialize_data_loader(batch_size, num_workers) -> Tuple[DataLoader, DataLoader]:
-    print(f"=> creating dataloader ... ")
-    
-    transform = transforms.Compose(
-        [transforms.ToTensor(),
-        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
-    )
-    
-    # CIFAR-10
-    trainset = torchvision.datasets.CIFAR10(root='path', train=True, download=True, transform=transform)
-    validset = torchvision.datasets.CIFAR10(root='path', train=False, download=False, transform=transform)
-
-
-    train_sampler = ElasticDistributedSampler(trainset)
-
-    train_loader = DataLoader(trainset, 
-                            batch_size = batch_size, 
-                            num_workers=num_workers,
-                            pin_memory= True,
-                            sampler = train_sampler)
-
-    val_loader = DataLoader(validset, 
-                            batch_size = batch_size, 
-                            shuffle=False, 
-                            num_workers=num_workers, 
-                            pin_memory=True)
-
-    return train_loader, val_loader
-
-def adjust_learing_rate(optimizer, epoch, lr):
-    """
-    Sets the learning rate to the initial LR decayed by 10 every 30 epochs
-    """
-    learning_rate = lr * (0.1 ** (epoch // 30))
-    for param_group in optimizer.param_groups:
-        param_group["lr"] = learning_rate
 
 def train(
         train_loader : DataLoader,
@@ -151,6 +66,7 @@ def train(
 
         # measure accuracy and record loss
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
+        
         losses.update(loss.item(), images.size(0))
         top1.update(acc1[0], images.size(0))
         top5.update(acc5[0], images.size(0))
@@ -214,34 +130,19 @@ def validate(
         # TODO: this should also be done with the ProgressMeter
         if device_id == 0:
             print(
-                " * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}".format(top1=top1, top5=top5)
+                " * Acc@1 {top1.avg:.3f}".format(top1=top1)
             )
 
     return top1.avg
 
-def accuracy(output, target, topk=(1,)):
-    """
-    Computes the accuracy over the k top predictions for the specified values of k
-    """
-    with torch.no_grad():
-        maxk = max(topk)
-        batch_size = target.size(0)
-
-        _, pred = output.topk(maxk, 1, True, True)
-        pred = pred.t()
-        correct = pred.eq(target.view(1, -1).expand_as(pred))
-
-        res = []
-        for k in topk:
-            correct_k = correct[:k].reshape(1, -1).view(-1).float().sum(0, keepdim=True)
-            res.append(correct_k.mul_(100.0 / batch_size))
-        return res
-
 def main():
+    random_seed = 8967
     # parse arguments
     args = parse_args()
     device_id = int(os.environ["LOCAL_RANK"])
     torch.cuda.set_device(device_id)
+    torch.manual_seed(random_seed)
+    torch.cuda.manual_seed_all(random_seed) 
     print(f"=> set cuda device = {device_id}")
 
     dist.init_process_group(
