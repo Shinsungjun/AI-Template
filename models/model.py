@@ -14,7 +14,7 @@ class ConvNet(RmlModel):
         #    Conv     -> (?, 28, 28, 32)
         #    Pool     -> (?, 14, 14, 32)
         self.layer1 = torch.nn.Sequential(
-            torch.nn.Conv2d(1, 32, kernel_size=3, stride=1, padding=1),
+            torch.nn.Conv2d(3, 32, kernel_size=3, stride=1, padding=1),
             torch.nn.ReLU(),
             torch.nn.MaxPool2d(kernel_size=2, stride=2))
         # L2 ImgIn shape=(?, 14, 14, 32)
@@ -33,7 +33,7 @@ class ConvNet(RmlModel):
             torch.nn.MaxPool2d(kernel_size=2, stride=2, padding=1))
 
         # L4 FC 4x4x128 inputs -> 625 outputs
-        self.fc1 = torch.nn.Linear(4 * 4 * 128, 625, bias=True)
+        self.fc1 = torch.nn.Linear(4 * 4 * 200, 625, bias=True)
         torch.nn.init.xavier_uniform_(self.fc1.weight)
         self.layer4 = torch.nn.Sequential(
             self.fc1,

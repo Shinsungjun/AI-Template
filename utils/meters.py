@@ -32,10 +32,10 @@ class ProgressMeter(object):
         self.meters = meters
         self.prefix = prefix
 
-    def display(self, batch: int) -> None:
+    def display(self, batch: int, logger) -> None:
         entries = [self.prefix + self.batch_fmtstr.format(batch)]
         entries += [str(meter) for meter in self.meters]
-        print("\t".join(entries))
+        logger.info("\t".join(entries))
 
     def _get_batch_fmtstr(self, num_batches: int) -> str:
         num_digits = len(str(num_batches // 1))

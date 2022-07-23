@@ -2,7 +2,8 @@ import torch
 import torch.backends.cudnn as cudnn
 from torch.nn.parallel import DistributedDataParallel
 import torch.nn as nn
-
+import logging
+import os 
 
 def adjust_learing_rate(optimizer, epoch, lr):
     """
@@ -14,7 +15,6 @@ def adjust_learing_rate(optimizer, epoch, lr):
 
 
 def initialize_model(single_model, lr, device_id):
-    print(f"=> creating model ... ")
     model = single_model
     model.cuda(device_id)
     cudnn.benchmark = True
@@ -24,7 +24,33 @@ def initialize_model(single_model, lr, device_id):
     optimizer = torch.optim.SGD(model.parameters(), lr=lr)
 
     return model, criterion, optimizer
+def get_log(path):
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    formatter = logging.Formatter('%(asctime)s - %(message)s')
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(formatter)
+    logger.addHandler(stream_handler)
+    file_handler = logging.FileHandler(path+'train.log')
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+    return logger
 
+def create_save_dir(name):
+    default_path = "result"
+    try:
+        if not os.path.exists(default_path):
+            os.makedirs(default_path)
+        
+        if not os.path.exists(default_path + '/' + name):
+            os.makedirs(default_path + '/' + name)
+
+    except:
+        print("Error : Failed to create the directory")
+
+    path = default_path + '/' + name +'/'
+    
+    return path
 def accuracy(output, target, topk=(1,)):
     """
     Computes the accuracy over the k top predictions for the specified values of k
